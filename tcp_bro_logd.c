@@ -18,7 +18,7 @@ Serial (1 port) to LAN (32 Sessions) Broadcast		2020, 11, 06 leesy
 #include <time.h>
 #include <linux/rtc.h>
 
-#define VERSION "1.0"
+#define VERSION "1.1"
 #define MAX_BUFFER_SIZE 		3000
 #define MAX_SOCKET_READ_SIZE 	512
 #define MAX_SERIAL_READ_SIZE 	512
@@ -76,9 +76,16 @@ void read_rtc();
 
 int limit;
 
-char rBUF[50][MAX_SERIAL_READ_SIZE+2+1];
-int  rBUFcnt=0;
-int  rBUFmax=10;
+#define REC_BUF_SIZE_MAX (8+1+6+1+MAX_SERIAL_READ_SIZE)
+struct rec_buf_struct
+{
+	int				length;
+	char  			buffer[REC_BUF_SIZE_MAX+2+1];
+};	
+
+struct rec_buf_struct  rec_buf_array[50+10];
+int  rec_buf_cnt=0;
+int  rec_buf_max=10;
 
 //===============================================================================	
 int main (int argc, char *argv[])
@@ -92,12 +99,12 @@ int socket_no;
 	if (argc < 4)
 	{
 		printf("tcp_bro_logd - version %s\n", VERSION);
-		printf("usage>\ntcp_bro_logd <serial port number> <serial speed> <TCP port number> <buffer max>\n");
+		printf("usage>\ntcp_bro_logd <serial port number> <serial speed> <TCP port number> [<buffer max>]\n");
 		printf(" <serial port number> = 1 ~ 4\n");
 		printf(" <serial speed> = 0 ~ 13\n");
 		printf("\t0 : 150 BPS, 1 : 300 BPS, 2 : 600 BPS, 3 : 1200 BPS\n\t4 : 2400 BPS, 5 : 4800 BPS, 6 : 9600 BPS, 7 : 19200 BPS\n\t8 : 38400 BPS, 9 : 57600 BPS, 10 : 115200 BPS\n\t11 : 230400 BPS, 12 : 460800 BPS, 13 : 921600 BPS\n");
 		printf(" <TCP port number> = 4001 or 4002 or 4003 or 4004 or etc.\n");
-		printf(" <buffer max> = 0 ~ 50\n");
+		printf(" option [<buffer max>] = 1 ~ 50, default is 10\n");
 		exit(-1);
 	}
 
@@ -130,16 +137,16 @@ Speed 통신 속도
 
 	if (argc > 4)
 	{
-		rBUFmax = atoi(argv[4]);
-		if(rBUFmax < 0)
+		rec_buf_max = atoi(argv[4]);
+		if(rec_buf_max < 1)
 		{
-			printf("fixed..rBUFmax:0count\n");
-			rBUFmax = 0;
+			printf("fixed..rec_buf_max:1count\n");
+			rec_buf_max = 1;
 		}
-		if(rBUFmax > 50)
+		if(rec_buf_max > 50)
 		{
-			printf("fixed..rBUFmax:50count\n");
-			rBUFmax = 50;
+			printf("fixed..rec_buf_max:50count\n");
+			rec_buf_max = 50;
 		}
 	}
 
@@ -198,8 +205,8 @@ Speed 통신 속도
 		****/
 
 		if (SB_DEBUG) 
-			SB_LogMsgPrint ("Tcp_Broadcast port=%d, speed=%d, dps=%d, flow=%d, MRU=%d, Alive=%d, interface=%d, TCP port=%d, buf_max=%d\n", port_no+1, SYS.bps, SYS.dps, SYS.flow, SYS.wait_msec, SYS.alivetime, SYS.interface, SYS.socket, rBUFmax);
-		printf("Tcp_Broadcast port=%d, speed=%d, dps=%d, flow=%d, MRU=%d, Alive=%ld, interface=%d, TCP port=%d, buf_max=%d\n", port_no+1, SYS.bps, SYS.dps, SYS.flow, SYS.wait_msec, SYS.alivetime, SYS.interface, SYS.socket, rBUFmax);
+			SB_LogMsgPrint ("Tcp_Broadcast port=%d, speed=%d, dps=%d, flow=%d, MRU=%d, Alive=%d, interface=%d, TCP port=%d, buf_max=%d\n", port_no+1, SYS.bps, SYS.dps, SYS.flow, SYS.wait_msec, SYS.alivetime, SYS.interface, SYS.socket, rec_buf_max);
+		printf("Tcp_Broadcast port=%d, speed=%d, dps=%d, flow=%d, MRU=%d, Alive=%ld, interface=%d, TCP port=%d, buf_max=%d\n", port_no+1, SYS.bps, SYS.dps, SYS.flow, SYS.wait_msec, SYS.alivetime, SYS.interface, SYS.socket, rec_buf_max);
 		
 		mainloop();
 	}
@@ -260,12 +267,20 @@ unsigned long STimer = 0;
 
 	SB_msleep (100);
 	SYS.listen_fd = SB_ListenTcp (SYS.socket,4, 4);
-	if (SYS.listen_fd <= 0) return;
+	if (SYS.listen_fd <= 0)
+	{
+		printf("SB_ListenTcp socket=%d error!!! %d\n", SYS.socket, SYS.listen_fd);
+		return;
+	}
 
 	if (SYS.sfd <= 0)
 	{
 		SYS.sfd = SB_OpenSerial (port_no);
-		if (SYS.sfd <= 0) return;
+		if (SYS.sfd <= 0)
+		{
+			printf("SB_OpenSerial port_no=%d error!!! %d\n", port_no, SYS.sfd);
+			return;
+		}
 	}
 	ioctl (SYS.sfd, INTERFACESEL, &SYS.interface);
 	SB_InitSerial (SYS.sfd, SYS.bps, SYS.dps, SYS.flow);
@@ -465,7 +480,7 @@ char prefix[6+1+6+1+1];
 					strncpy(f_name, dir->d_name, 8);
 					f_name[6] = '\0';
 					ymd = atoi(f_name);
-					printf("file name is %s, %d\n", f_name, ymd);
+					//printf("file name is %s, %d\n", f_name, ymd);
 					if (ymd != 0 && ymd < min) {
 						min = ymd;
 						strcpy(target, dir->d_name);
@@ -477,9 +492,14 @@ char prefix[6+1+6+1+1];
 			sprintf(target_full, "/tmp/usb/%s", target);
 			//printf("target full file is \"%s\".\n", target_full);
 			if (min != 999999) {
+				printf("remove %s file\n", target);
 				remove(target_full);
 			}
 		}
+	}
+	else
+	{
+		printf("statfs error! %s\n", strerror(errno));
 	}
 
 	int old_y, old_m, old_d;
@@ -496,9 +516,16 @@ char prefix[6+1+6+1+1];
 	{
 		if (SYS.logfd > 0)
 		{
+			//
+			int i;
+			for ( i = 0; i < rec_buf_cnt ; i++ )
+			{
+				write(SYS.logfd, rec_buf_array[i].buffer, rec_buf_array[i].length );
+				rec_buf_array[i].length = 0;
+			}
 			fsync(SYS.logfd);
-			close(SYS.logfd);			receive_from_port();
-
+			close(SYS.logfd);
+			rec_buf_cnt=0;
 		}
 		char filename[100];
 		sprintf(filename, "/tmp/usb/%02d%02d%02d.txt",
@@ -507,7 +534,7 @@ char prefix[6+1+6+1+1];
 		//printf("open(\"%s\"):return = %d\n", filename, SYS.sfd);
 	}
 
-	sprintf(prefix, "%02d%02d%02d %02d%02d%02d ",
+	sprintf(prefix, "%04d%02d%02d,%02d%02d%02d,",
 		rtctime.tm_year + 1900, rtctime.tm_mon + 1, rtctime.tm_mday,
 		rtctime.tm_hour, rtctime.tm_min, rtctime.tm_sec);
 	/***
@@ -524,31 +551,105 @@ char prefix[6+1+6+1+1];
 	}
 	***/
 
-	strncpy( rBUF[rBUFcnt], prefix, strlen(prefix) );
-	if(WORK[len-1] == 0x0d) // == '\r'
+	char *ptr_d;
+	char *ptr_n;
+	ptr_d = WORK;
+	while( len > 0 )
 	{
-		strncpy( &rBUF[rBUFcnt][strlen(prefix)], WORK, len );  //Buf..LogRecords
-		strncpy( &rBUF[rBUFcnt][strlen(prefix) + len], "\n", 1 );
-		strncpy( &rBUF[rBUFcnt][strlen(prefix) + len + 1], "\0", 1 );
-	}
-	else
-	{
-		strncpy( &rBUF[rBUFcnt][strlen(prefix)], WORK, len );  //Buf..LogRecords
-		strncpy( &rBUF[rBUFcnt][strlen(prefix) + len], "\r\n", 2 );
-		strncpy( &rBUF[rBUFcnt][strlen(prefix) + len + 2], "\0", 1 );
-	}
-	rBUFcnt++;
-	//
-	if ( rBUFcnt >= rBUFmax )  //rBUF
-	{
-		for ( rBUFcnt=0; rBUFcnt<rBUFmax ; rBUFcnt++ )
+		ptr_n = strchr(ptr_d, 0x0d/*\r*/);
+		//printf("len=%d,d=0x%x,n=0x%x\n", len, (unsigned int)ptr_d, (unsigned int)ptr_n);
+		if ( ptr_n && ptr_n < ptr_d + len)
 		{
-			write(SYS.logfd, rBUF[rBUFcnt], strlen(rBUF[rBUFcnt]) );
+			if ( *(ptr_n + 1) == 0x0a/*\n*/ )
+			{
+				//printf("1:length=%d\n", rec_buf_array[rec_buf_cnt].length);
+				if ( rec_buf_array[rec_buf_cnt].length == 0)
+				{
+					strncpy( rec_buf_array[rec_buf_cnt].buffer, prefix, strlen(prefix) );
+					rec_buf_array[rec_buf_cnt].length = strlen(prefix);
+				}
+				if ( rec_buf_array[rec_buf_cnt].length + (int)(ptr_n - ptr_d) + 2 <= REC_BUF_SIZE_MAX )
+				{
+					strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length],
+						ptr_d, (int)(ptr_n - ptr_d) + 2 );
+					rec_buf_array[rec_buf_cnt].length += (int)(ptr_n - ptr_d) + 2;
+					//strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length], "\0", 1 );
+					len -= (int)(ptr_n - ptr_d) + 2;
+					ptr_d = ptr_n + 2;
+				}
+			}
+			else
+			{
+				//printf("2:length=%d\n", rec_buf_array[rec_buf_cnt].length);
+				if ( rec_buf_array[rec_buf_cnt].length == 0)
+				{
+					strncpy( rec_buf_array[rec_buf_cnt].buffer, prefix, strlen(prefix) );
+					rec_buf_array[rec_buf_cnt].length = strlen(prefix);
+				}
+				if ( rec_buf_array[rec_buf_cnt].length + (int)(ptr_n - ptr_d) + 1 + 1 <= REC_BUF_SIZE_MAX )
+				{
+					strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length],
+						ptr_d, (int)(ptr_n - ptr_d) + 1 );
+					rec_buf_array[rec_buf_cnt].length += (int)(ptr_n - ptr_d) + 1;
+					strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length],
+						"\n", 1 );
+					rec_buf_array[rec_buf_cnt].length += 1;
+					//strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length], "\0", 1 );
+					len -= (int)(ptr_n - ptr_d) + 1;
+					ptr_d = ptr_n + 1;
+				}
+			}
+			rec_buf_cnt++;
+			//
+			if ( rec_buf_cnt >= rec_buf_max )  //rec_buf_array
+			{
+				int i;
+				for ( i = 0; i < rec_buf_cnt ; i++ )
+				{
+					write(SYS.logfd, rec_buf_array[i].buffer, rec_buf_array[i].length );
+					rec_buf_array[i].length = 0;
+				}
+				fsync(SYS.logfd);
+				rec_buf_cnt=0;
+			}
 		}
-		rBUFcnt=0;
+		else
+		{
+			//printf("3:length=%d\n", rec_buf_array[rec_buf_cnt].length);
+			if ( rec_buf_array[rec_buf_cnt].length == 0)
+			{
+				strncpy( rec_buf_array[rec_buf_cnt].buffer, prefix, strlen(prefix) );
+				rec_buf_array[rec_buf_cnt].length = strlen(prefix);
+			}
+			if ( rec_buf_array[rec_buf_cnt].length + len <= REC_BUF_SIZE_MAX )
+			{
+				strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length],
+					ptr_d, len );
+				rec_buf_array[rec_buf_cnt].length += len;
+				len -= len;
+				ptr_d += len;
+			}
+			else
+			{
+				strncpy( &rec_buf_array[rec_buf_cnt].buffer[rec_buf_array[rec_buf_cnt].length],
+					"\r\n", 2 );
+				rec_buf_array[rec_buf_cnt].length += 2;
+				rec_buf_cnt++;
+				//
+				if ( rec_buf_cnt >= rec_buf_max )  //rec_buf_array
+				{
+					int i;
+					for ( i = 0; i < rec_buf_cnt ; i++ )
+					{
+						write(SYS.logfd, rec_buf_array[i].buffer, rec_buf_array[i].length );
+						rec_buf_array[i].length = 0;
+					}
+					fsync(SYS.logfd);
+					rec_buf_cnt=0;
+				}
+			}
+		}
 	}
-
-	fsync(SYS.logfd);
 
 	return 0;
 }
